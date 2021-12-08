@@ -173,6 +173,7 @@ mg_static_assert(sizeof(void *) >= sizeof(int), "data type size check");
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr.h>
+#include <net/tls_credentials.h>
 
 #include <fcntl.h>
 
@@ -14568,12 +14569,17 @@ set_ports_option(struct mg_context *phys_ctx)
 	union usa usa;
 	socklen_t len;
 	int ip_version;
+	int proto;
 
 	int portsTotal = 0;
 	int portsOk = 0;
 
 	const char *opt_txt;
 	long opt_max_connections;
+
+#if defined(__ZEPHYR__)
+	sec_tag_t crt_tag;
+#endif
 
 	if (!phys_ctx) {
 		return 0;
@@ -14609,7 +14615,21 @@ set_ports_option(struct mg_context *phys_ctx)
 		}
 #endif
 
-		if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM, 6))
+#if defined(__ZEPHYR__)
+		if (so.is_ssl) {
+			proto = IPPROTO_TLS_1_2;
+		} else {
+			proto = 6; /* TCP */
+		}
+#else
+		proto = 6; /* TCP */
+#endif
+
+		/* Create socket. */
+		if ((so.sock =
+		         socket(so.lsa.sa.sa_family,
+		                SOCK_STREAM,
+		                proto))
 		    == INVALID_SOCKET) {
 
 			mg_cry_ctx_internal(phys_ctx,
@@ -14698,6 +14718,26 @@ set_ports_option(struct mg_context *phys_ctx)
 			continue;
 #endif
 		}
+
+#if defined(__ZEPHYR__)
+		if (so.is_ssl) {
+			crt_tag = atoi(phys_ctx->dd.config[SSL_CERTIFICATE]);
+
+			if (setsockopt(so.sock,
+			               SOL_TLS, TLS_SEC_TAG_LIST,
+			               &crt_tag,
+			               sizeof(crt_tag))
+			    != 0) {
+
+				mg_cry_ctx_internal(phys_ctx,
+						    "Cannot add SSL socket (entry %i)",
+						    portsTotal);
+				closesocket(so.sock);
+				so.sock = INVALID_SOCKET;
+				continue;
+			}
+		}
+#endif
 
 		if (so.lsa.sa.sa_family == AF_INET) {
 
@@ -17985,6 +18025,7 @@ worker_thread_run(struct mg_connection *conn)
 
 		conn->request_info.is_ssl = conn->client.is_ssl;
 
+#if !defined(__ZEPHYR__)
 		if (conn->client.is_ssl) {
 #if !defined(NO_SSL)
 			/* HTTPS connection */
@@ -18024,9 +18065,12 @@ worker_thread_run(struct mg_connection *conn)
 			}
 #endif
 		} else {
+#endif
 			/* process HTTP connection */
 			process_new_connection(conn);
+#if !defined(__ZEPHYR__)
 		}
+#endif
 
 		DEBUG_TRACE("%s", "Connection closed");
 	}
