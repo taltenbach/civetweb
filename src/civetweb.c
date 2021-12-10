@@ -14721,6 +14721,14 @@ set_ports_option(struct mg_context *phys_ctx)
 
 #if defined(__ZEPHYR__)
 		if (so.is_ssl) {
+			if (phys_ctx->dd.config[SSL_CERTIFICATE] == NULL) {
+				mg_cry_ctx_internal(
+					phys_ctx,
+					"Initializing SSL failed: %s is not set",
+					config_options[SSL_CERTIFICATE].name);
+				continue;
+			}
+
 			crt_tag = atoi(phys_ctx->dd.config[SSL_CERTIFICATE]);
 
 			if (setsockopt(so.sock,
